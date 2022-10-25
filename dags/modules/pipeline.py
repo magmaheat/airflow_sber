@@ -22,7 +22,7 @@ def time_now():
     return dtm.strftime("%d/%m/%Y %H:%M:%S")
 
 
-#  функция для подключения к бд
+# функция для подключения к бд
 def create_connection(db_name, db_user, db_password, db_host, db_port):
     connection = None
     try:
@@ -39,70 +39,85 @@ def create_connection(db_name, db_user, db_password, db_host, db_port):
     return connection
 
 
+# отбрасываем все ненужные признаки
 def filter_data(df: pd.DataFrame) -> pd.DataFrame:
-    columns_to_drop = ['device_model', 'utm_source', 'utm_campaign', 'utm_adcontent',
-               'utm_keyword', 'device_screen_resolution', 'client_id']
+    if len(df.columns) > 15:
+        columns_to_drop = ['device_model', 'utm_source', 'utm_campaign', 'utm_adcontent',
+                   'utm_keyword', 'device_screen_resolution', 'client_id']
+    else:
+        columns_to_drop = ['event_value', 'hit_page_path', 'hit_time',
+                                'hit_referer', 'event_label']
 
     return df.drop(columns=columns_to_drop, axis=1)
 
 
+# все необходимые преобрвзования над значениями в датафрейме
 def values_update(df: pd.DataFrame) -> pd.DataFrame:
     df2 = df.copy()
-    special_mask = ((df2.device_brand == '(not set)') &
-                    ((df2.device_os.isna()) | (df2.device_os == 'Android') |
-                    (df2.device_category == 'mobile')))
-    df2.loc[special_mask, 'device_brand'] = 'Xiaomi'
-
-    df2.loc[df.device_browser == 'Safari (in-app)', 'device_browser'] = 'Safari'
-    df2.loc[df.device_brand.isna(), 'device_brand'] = '(not set)'
-    df2.loc[(df.device_brand == 'Apple') & (df2.device_os.isna()), 'device_os'] = 'iOS'
-
-    brand_keys = list(df2.device_brand.value_counts()[:20].keys())
-    brand_keys.remove('Apple')
-    brand_keys.remove('(not set)')
-
-    for i in range(len(df)):
-        if df2.device_brand[i] in brand_keys:
-            df2.loc[i:i, 'device_os'] = 'Android'
-
-    df2.loc[((df2.device_category == 'desktop') &
-                     (df2.device_os.isna())), 'device_os'] = 'Windows'
-
-    df2.loc[df.utm_medium == '(none)', 'utm_medium'] = '(not set)'
-
-    return df2
-
-
-def replace_session_id(df: pd.DataFrame) -> pd.DataFrame:
-    df2 = df.copy()
     df2.session_id = df2.session_id.apply(lambda x: int(x.replace('.', '')))
+
+    if len(df2.columns) > 9:
+        special_mask = ((df2.device_brand == '(not set)') &
+                        ((df2.device_os.isna()) | (df2.device_os == 'Android') |
+                        (df2.device_category == 'mobile')))
+        df2.loc[special_mask, 'device_brand'] = 'Xiaomi'
+
+        df2.loc[df.device_browser == 'Safari (in-app)', 'device_browser'] = 'Safari'
+        df2.loc[df.device_brand.isna(), 'device_brand'] = '(not set)'
+        df2.loc[(df.device_brand == 'Apple') & (df2.device_os.isna()), 'device_os'] = 'iOS'
+
+        brand_keys = list(df2.device_brand.value_counts()[:20].keys())
+        brand_keys.remove('Apple')
+        brand_keys.remove('(not set)')
+
+        for i in range(len(df)):
+            if df2.device_brand[i] in brand_keys:
+                df2.loc[i:i, 'device_os'] = 'Android'
+
+        df2.loc[((df2.device_category == 'desktop') &
+                         (df2.device_os.isna())), 'device_os'] = 'Windows'
+
+        df2.loc[df.utm_medium == '(none)', 'utm_medium'] = '(not set)'
+    else:
+        df2.hit_date = df2.hit_date.apply(lambda x: dt.datetime.strptime(x, '%Y-%m-%d'))
+
     return df2
 
 
 # создание нового признака visit_dt
 def add_visit_dt(df: pd.DataFrame) -> pd.DataFrame:
     df2 = df.copy()
-    for i in range(len(df2)):
-        row_date = dt.datetime.strptime(df2.visit_date[i] + ' ' + df2.visit_time[i],
-                                        '%Y-%m-%d %H:%M:%S')
-        df2.loc[i:i, 'visit_dt'] = row_date
+    if len(df.columns) > 9:
+        df2 = df.copy()
+        for i in range(len(df2)):
+            row_date = dt.datetime.strptime(df2.visit_date[i] + ' ' + df2.visit_time[i],
+                                            '%Y-%m-%d %H:%M:%S')
+            df2.loc[i:i, 'visit_dt'] = row_date
+        df2.drop(columns=['visit_date', 'visit_time'], axis=1, inplace=True)
 
-    return df2.drop(columns=['visit_date', 'visit_time'], axis=1)
+    return df2
 
 
-def load_json_sessions(df: pd.DataFrame) -> None:
+# загрузка json файлов в бд sessions
+def load_json(df: pd.DataFrame) -> None:
     df2 = df.copy()
-    df2_list = []
 
+    df2_list = []
     for i in range(len(df2)):
         df2_list.append(tuple(df2.iloc[i].values))
 
     sessions_records = ", ".join(["%s"] * len(df2_list))
-    insert_query = (
-        f"INSERT INTO sessions (session_id, visit_number,"
-        f"utm_medium, device_category, device_os, device_brand,"
-        f"device_browser, geo_country, geo_city, visit_dt) VALUES {sessions_records}"
-    )
+    if len(df2.columns) > 9:
+        insert_query = (
+            f"INSERT INTO sessions (session_id, visit_number,"
+            f"utm_medium, device_category, device_os, device_brand,"
+            f"device_browser, geo_country, geo_city, visit_dt) VALUES {sessions_records}"
+        )
+    else:
+        insert_query = (
+            f"INSERT INTO hits (session_id, hit_date, hit_number,"
+            f"hit_type, event_category, event_action) VALUES {sessions_records}"
+        )
 
     connection = create_connection('airflow', 'airflow', 'airflow', 'pg_db', '5432')
     cursor = connection.cursor()
@@ -113,7 +128,7 @@ def load_json_sessions(df: pd.DataFrame) -> None:
     cursor.close()
     connection.close()
 
-
+# загрузка информации о загружаемых файлах в таблицу filelist
 def loading_to_filelist(connection, name_file, length):
     time_load = time_now()
     len_file = length
@@ -131,7 +146,7 @@ def loading_to_filelist(connection, name_file, length):
     cursor.close()
 
 
-# смотрим наличие файлов в "./diploma/json/"
+# смотрим наличие новых json файлов в "./data/json/"
 def list_file_path():
     list_load = []
     path_json = f"{PATH}/data/json"
@@ -158,6 +173,7 @@ def execute_read_query(connection, query):
         logging.error(f"The error '{e}' occurred")
 
 
+# отправка запроса в filelist на наличия файла в sessions
 def request_to_filelist(connection, name_file):
     select_sessions = "SELECT * FROM filelist"
     file_list = execute_read_query(connection, select_sessions)
@@ -175,6 +191,7 @@ def request_to_filelist(connection, name_file):
 def pipeline() -> None:
     # подключаемся к нашей бд
     connection = create_connection('airflow', 'airflow', 'airflow', 'pg_db', '5432')
+    # смотрим какие json файлы есть у нас в ./data/json
     list_jsons = list_file_path()
     for i in list_jsons:
         if request_to_filelist(connection, i[1]):
@@ -186,8 +203,7 @@ def pipeline() -> None:
                     ('filter', FunctionTransformer(filter_data)),
                     ('visit_dt', FunctionTransformer(add_visit_dt)),
                     ('values', FunctionTransformer(values_update)),
-                    ('int_id', FunctionTransformer(replace_session_id)),
-                    ('load_json', FunctionTransformer(load_json_sessions)),
+                    ('load_json', FunctionTransformer(load_json)),
                     ('load_to_filelist', FunctionTransformer(loading_to_filelist(connection, i[1], len(df))))
                 ])
 

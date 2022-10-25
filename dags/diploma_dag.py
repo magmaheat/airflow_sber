@@ -7,6 +7,7 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 
 from modules.pipeline import pipeline
+from modules.create_db_airflow import create_db_airflow
 
 
 path = os.path.expanduser('~/diploma_pro')
@@ -36,11 +37,17 @@ with DAG(
         dag=dag,
     )
 
+    create_db_airflow = PythonOperator(
+        task_id='create_db_airflow',
+        python_callable=create_db_airflow,
+        dag=dag,
+    )
+
     pipeline = PythonOperator(
         task_id='pipeline',
         python_callable=pipeline,
         dag=dag,
     )
 
-    first_task >> pipeline
+    first_task >> create_db_airflow >> pipeline
 
